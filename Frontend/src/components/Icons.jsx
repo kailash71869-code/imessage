@@ -174,3 +174,4 @@ export function CheckStatusTick({ status = "sent" }) {
     </svg>
   );
 }
+

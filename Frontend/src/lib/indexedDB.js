@@ -99,3 +99,4 @@ export async function getSavedCryptoKeys() {
   const db = await getDB();
   return await db.get('cryptoKeys', 'user_ecdh_keys');
 }
+

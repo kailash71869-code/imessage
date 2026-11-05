@@ -48,3 +48,4 @@ export function getRedisClients() {
 export function getRedisUrl() {
   return REDIS_URL;
 }
+

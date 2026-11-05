@@ -109,3 +109,4 @@ export default function SummaryModal({ isOpen, onClose, summaryData, loading }) 
     </div>
   );
 }
+

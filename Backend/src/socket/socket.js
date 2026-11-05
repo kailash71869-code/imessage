@@ -111,3 +111,4 @@ export function setupSocket(server, FRONTEND_URL) {
 
   return io;
 }
+

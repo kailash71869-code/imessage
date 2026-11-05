@@ -168,3 +168,4 @@ export async function decryptMessage(ciphertext, ivBase64, key) {
     return '[Decryption failed: Key mismatch or corrupted ciphertext]';
   }
 }
+

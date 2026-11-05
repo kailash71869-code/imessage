@@ -123,3 +123,4 @@ export default function VoiceRecorder({ isRecording, onCancel, onFinishRecording
     </div>
   );
 }
+
