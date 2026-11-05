@@ -112,3 +112,12 @@ export function setupSocket(server, FRONTEND_URL) {
   return io;
 }
 
+export function isUserOnline(userId) {
+  if (!userId) return false;
+  return onlineUsers.has(String(userId));
+}
+
+export function getOnlineUserIds() {
+  return Array.from(onlineUsers.keys());
+}
+

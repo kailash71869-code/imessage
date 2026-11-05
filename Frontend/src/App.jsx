@@ -1,9 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useUser, useClerk } from '@clerk/react';
+import { useUser } from '@clerk/react';
 import Sidebar from './components/Sidebar';
 import ChatCanvas from './components/ChatCanvas';
 import CodeModal from './components/CodeModal';
 import SummaryModal from './components/SummaryModal';
+import BotChat from './components/BotChat';
+import NewsFeed from './components/NewsFeed';
+import MediaViewer from './components/MediaViewer';
+import BottomNav from './components/BottomNav';
+import ChannelCreate from './components/ChannelCreate';
+import StatusPage from './components/StatusPage';
+import SettingsPage from './components/SettingsPage';
+import StudyRoom from './components/StudyRoom';
+import AuthPage from './pages/AuthPage';
+import { getCurrentUser, clearSession, isAuthenticated, getAuthHeaders } from './lib/session';
+import { t } from './lib/i18n';
 
 import {
   generateECDHKeyPair,
@@ -87,7 +98,7 @@ const INITIAL_CONVERSATIONS = [
     isEncrypted: true,
     unreadCount: 0,
     avatar: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=100&h=100&fit=crop',
-    lastMessage: 'Welcome to iMessage Pro team workspace.',
+    lastMessage: 'Welcome to WhatsApp Pro team workspace.',
     lastTime: 'Yesterday',
   },
 ];
@@ -95,9 +106,21 @@ const INITIAL_CONVERSATIONS = [
 export default function App() {
   const { user: clerkUser } = useUser();
   const [currentUserIndex, setCurrentUserIndex] = useState(0);
+  const [sessionUser, setSessionUser] = useState(() => getCurrentUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Active Current User (Clerk User if authenticated, otherwise Test Profile)
-  const currentUser = clerkUser
+  // Active Current User (Session User if logged in via OTP, else Clerk User, else Test Profile)
+  const currentUser = sessionUser
+    ? {
+        clerkId: sessionUser.clerkId || sessionUser._id || 'user_local',
+        fullName: sessionUser.fullName || sessionUser.username || 'User',
+        username: sessionUser.username || sessionUser.clerkId || 'user',
+        profilepic: sessionUser.profilepic || sessionUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
+        phone: sessionUser.phone,
+        email: sessionUser.email,
+        bio: sessionUser.bio,
+      }
+    : clerkUser
     ? {
         clerkId: clerkUser.id,
         fullName: clerkUser.fullName || clerkUser.username || 'User',
@@ -121,11 +144,19 @@ export default function App() {
   const [typingUsers, setTypingUsers] = useState([]);
   const [isOpenMobile, setIsOpenMobile] = useState(false);
 
-  // Modals
+  // Modals & Navigation Views
   const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [summaryData, setSummaryData] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [activeView, setActiveView] = useState('chats'); // 'chats' | 'bot' | 'news' | 'status' | 'study' | 'settings'
+  const [isChannelCreateOpen, setIsChannelCreateOpen] = useState(false);
+  const [language, setLanguage] = useState(() => localStorage.getItem('app_lang') || 'en');
+  const [mediaViewerState, setMediaViewerState] = useState({
+    isOpen: false,
+    mediaList: [],
+    initialIndex: 0,
+  });
   const [smartReplies, setSmartReplies] = useState([
     "Checking container logs now.",
     "Web Crypto E2EE verified.",
@@ -175,6 +206,54 @@ export default function App() {
       }
     }
     initCrypto();
+  }, [currentUser.clerkId]);
+
+  // Sync session changes from window storage events
+  useEffect(() => {
+    const handleSessionChange = (e) => {
+      setSessionUser(e.detail?.user || null);
+    };
+    window.addEventListener('imessage_session_changed', handleSessionChange);
+    return () => window.removeEventListener('imessage_session_changed', handleSessionChange);
+  }, []);
+
+  // Fetch contacts and sync registered users from backend
+  useEffect(() => {
+    async function loadContacts() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/contacts`, {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.contacts && data.contacts.length > 0) {
+            const mappedContacts = data.contacts
+              .filter((c) => c.clerkId !== currentUser.clerkId && c._id !== currentUser.clerkId)
+              .map((c) => ({
+                id: `room-${c.clerkId || c._id}`,
+                name: c.fullName || c.username || 'Contact',
+                participantId: c.clerkId || c._id,
+                isChannel: false,
+                isEncrypted: true,
+                unreadCount: 0,
+                avatar: c.profilepic || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
+                lastMessage: c.bio || 'Available on WhatsApp',
+                lastTime: c.isOnline ? 'Online' : '',
+              }));
+
+            setConversations((prev) => {
+              const channels = prev.filter((r) => r.isChannel);
+              const existingIds = new Set(channels.map((ch) => ch.id));
+              const freshContacts = mappedContacts.filter((mc) => !existingIds.has(mc.id));
+              return [...channels, ...freshContacts];
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Contacts] Failed to load backend contacts:', err.message);
+      }
+    }
+    loadContacts();
   }, [currentUser.clerkId]);
 
   // 3. Flush Outbox Queue on Reconnect
@@ -407,6 +486,7 @@ export default function App() {
     voiceNote = null,
     mediaUrl = "",
     fileObj = null,
+    replyTo = undefined,
   }) => {
     const roomKey = roomKeysRef.current[activeRoom.id] || await getRoomFallbackKey(activeRoom.id);
 
@@ -429,6 +509,7 @@ export default function App() {
       codeSnippet,
       voiceNote,
       mediaUrl,
+      replyTo,
       status: isOnline ? 'sent' : 'queued',
       createdAt: new Date().toISOString(),
     };
@@ -527,12 +608,15 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-zinc-950 font-sans antialiased text-zinc-900 dark:text-zinc-100">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#ECE5DD] dark:bg-[#0B141A] font-sans antialiased text-zinc-900 dark:text-zinc-100">
       {/* Sidebar (WhatsApp-inspired split-pane left side) */}
       <Sidebar
         conversations={conversations}
         activeRoom={activeRoom}
-        onSelectRoom={setActiveRoom}
+        onSelectRoom={(room) => {
+          setActiveRoom(room);
+          setActiveView('chats');
+        }}
         currentUser={currentUser}
         onSwitchUser={handleSwitchUser}
         isDarkMode={isDarkMode}
@@ -543,24 +627,101 @@ export default function App() {
         onlineUserIds={onlineUserIds}
         isOpenMobile={isOpenMobile}
         onCloseMobile={() => setIsOpenMobile(false)}
+        activeTab={activeView}
+        onSelectTab={(tab) => setActiveView(tab)}
+        currentLanguage={language}
+        onSelectLanguage={(lang) => {
+          setLanguage(lang);
+          localStorage.setItem('app_lang', lang);
+        }}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onLogout={() => {
+          clearSession();
+          setSessionUser(null);
+        }}
+        isSessionAuthenticated={!!sessionUser}
+        onOpenCreateChannel={() => setIsChannelCreateOpen(true)}
       />
 
-      {/* Active Message Canvas (WhatsApp-inspired split-pane right side) */}
-      <ChatCanvas
-        room={activeRoom}
-        messages={messages}
-        currentUser={currentUser}
-        onSendMessage={handleSendMessage}
-        onOpenCodeModal={() => setIsCodeModalOpen(true)}
-        onOpenSummaryModal={handleOpenSummary}
-        isCopilotActive={isCopilotActive}
-        smartReplies={smartReplies}
-        typingUsers={typingUsers}
-        onTyping={() => emitTyping(activeRoom.id, currentUser)}
-        onStopTyping={() => emitStopTyping(activeRoom.id, currentUser)}
-        isOnline={isOnline}
-        onOpenMobileSidebar={() => setIsOpenMobile(true)}
-      />
+      {/* Right Side Main View: BotChat / NewsFeed / StatusPage / SettingsPage / StudyRoom / ChatCanvas */}
+      {activeView === 'bot' ? (
+        <div className="flex-1 h-full overflow-hidden">
+          <BotChat
+            currentUser={currentUser}
+            initialLanguage={language}
+            onClose={() => setActiveView('chats')}
+            onShareToChat={(text) => {
+              handleSendMessage({ text, messageType: 'text' });
+              setActiveView('chats');
+            }}
+          />
+        </div>
+      ) : activeView === 'news' ? (
+        <div className="flex-1 h-full overflow-hidden">
+          <NewsFeed
+            currentLanguage={language}
+            onClose={() => setActiveView('chats')}
+            onShareToChat={(newsData) => {
+              handleSendMessage(newsData);
+              setActiveView('chats');
+            }}
+          />
+        </div>
+      ) : activeView === 'status' ? (
+        <div className="flex-1 h-full overflow-hidden">
+          <StatusPage
+            currentUser={currentUser}
+            onClose={() => setActiveView('chats')}
+          />
+        </div>
+      ) : activeView === 'settings' ? (
+        <div className="flex-1 h-full overflow-hidden">
+          <SettingsPage
+            currentUser={currentUser}
+            isDarkMode={isDarkMode}
+            onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+            onClose={() => setActiveView('chats')}
+            onLogout={() => {
+              clearSession();
+              setSessionUser(null);
+            }}
+            onUpdateProfile={(updated) => {
+              console.log('Profile updated:', updated);
+            }}
+          />
+        </div>
+      ) : activeView === 'study' ? (
+        <div className="flex-1 h-full overflow-hidden">
+          <StudyRoom
+            currentUser={currentUser}
+            onClose={() => setActiveView('chats')}
+          />
+        </div>
+      ) : (
+        <ChatCanvas
+          room={activeRoom}
+          messages={messages}
+          currentUser={currentUser}
+          onSendMessage={handleSendMessage}
+          onOpenCodeModal={() => setIsCodeModalOpen(true)}
+          onOpenSummaryModal={handleOpenSummary}
+          isCopilotActive={isCopilotActive}
+          smartReplies={smartReplies}
+          typingUsers={typingUsers}
+          onTyping={() => emitTyping(activeRoom.id, currentUser)}
+          onStopTyping={() => emitStopTyping(activeRoom.id, currentUser)}
+          isOnline={isOnline}
+          onOpenMobileSidebar={() => setIsOpenMobile(true)}
+          onOpenMedia={(item) =>
+            setMediaViewerState({
+              isOpen: true,
+              mediaList: [item],
+              initialIndex: 0,
+            })
+          }
+          currentLanguage={language}
+        />
+      )}
 
       {/* Code Snippet Modal */}
       <CodeModal
@@ -581,6 +742,64 @@ export default function App() {
         onClose={() => setIsSummaryModalOpen(false)}
         summaryData={summaryData}
         loading={summaryLoading}
+      />
+
+      {/* Fullscreen Media Viewer */}
+      <MediaViewer
+        isOpen={mediaViewerState.isOpen}
+        mediaList={mediaViewerState.mediaList}
+        initialIndex={mediaViewerState.initialIndex}
+        onClose={() => setMediaViewerState((prev) => ({ ...prev, isOpen: false }))}
+        onShare={(item) => {
+          handleSendMessage({
+            text: `Shared media: ${item.name}`,
+            messageType: item.type || 'file',
+            mediaUrl: item.url,
+          });
+        }}
+      />
+
+      {/* Phone/Email OTP WhatsApp Auth Modal */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md relative">
+            <button
+              type="button"
+              onClick={() => setIsAuthModalOpen(false)}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition cursor-pointer"
+            >
+              ✕
+            </button>
+            <AuthPage
+              onAuthSuccess={(user) => {
+                setSessionUser(user);
+                setIsAuthModalOpen(false);
+              }}
+              onCancel={() => setIsAuthModalOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Channel & Group Creation Modal */}
+      <ChannelCreate
+        isOpen={isChannelCreateOpen}
+        onClose={() => setIsChannelCreateOpen(false)}
+        onCreate={(newRoom) => {
+          setConversations((prev) => [newRoom, ...prev]);
+          setActiveRoom(newRoom);
+          setActiveView('chats');
+        }}
+      />
+
+      {/* WhatsApp Mobile Bottom Navigation */}
+      <BottomNav
+        activeTab={activeView}
+        onTabChange={(tab) => {
+          setActiveView(tab);
+          setIsOpenMobile(false);
+        }}
+        unreadCount={conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0) || 3}
       />
     </div>
   );

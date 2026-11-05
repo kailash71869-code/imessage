@@ -13,6 +13,11 @@ import { setupSocket } from './socket/socket.js';
 import aiRoutes from './routes/ai.routes.js';
 import messageRoutes from './routes/message.routes.js';
 import userRoutes from './routes/user.routes.js';
+import botRoutes from './routes/bot.routes.js';
+import newsRoutes from './routes/news.routes.js';
+import translateRoutes from './routes/translate.routes.js';
+import authRoutes from './routes/auth.routes.js';
+import contactRoutes from './routes/contact.routes.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -73,6 +78,11 @@ async function startServer() {
     app.use('/api/ai/copilot', aiRoutes);
     app.use('/api/messages', messageRoutes);
     app.use('/api/users', userRoutes);
+    app.use('/api/bot', botRoutes);
+    app.use('/api/news', newsRoutes);
+    app.use('/api/translate', translateRoutes);
+    app.use('/api/auth', authRoutes);
+    app.use('/api/contacts', contactRoutes);
 
     // Global Error Handler
     app.use((err, req, res, next) => {
